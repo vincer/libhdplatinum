@@ -7,7 +7,17 @@ import (
 	"time"
 	"strings"
 	"strconv"
+	"log"
 )
+
+const UPDATE_COMMAND_FORMAT = "$pss%s-04-%03d-"
+const END_COMMAND = "$rls"
+const ROOM_PREFIX = "$cr"
+const SHADE_PREFIX = "$cs"
+const DELIMITER = "-"
+const DATA_COMMAND = "$dat"
+const DATA_DELIMITER = " "
+const DATA_END = " $upd01-"
 
 func connect(address string) (*bufio.Scanner, *bufio.Writer, *net.TCPConn) {
 	tcpAddr, _ := net.ResolveTCPAddr("tcp4", address)
@@ -66,10 +76,10 @@ func (s *Shade) RoomId() string {
 
 func (s *Shade) SetHeight(h int) {
 	_, writer, conn := connect(s.address)
-	setHeightCommand := fmt.Sprintf("$pss%s-04-%03d-", s.id, h)
+	setHeightCommand := fmt.Sprintf(UPDATE_COMMAND_FORMAT, s.id, h)
 	writer.WriteString(setHeightCommand)
 	writer.Flush()
-	writer.WriteString("$rls")
+	writer.WriteString(END_COMMAND)
 	writer.Flush()
 
 	conn.Close()
@@ -81,12 +91,12 @@ func GetShades(ip string, port int) ([]Shade) {
 	data := getData(address)
 	shades := []Shade{}
 	for i, line := range data {
-		if strings.HasPrefix(line, "$cs") {
-			shadeTokens := strings.SplitN(line, "-", 4)
-			id := strings.TrimPrefix(shadeTokens[0], "$cs")
+		if strings.HasPrefix(line, SHADE_PREFIX) {
+			shadeTokens := strings.SplitN(line, DELIMITER, 4)
+			id := strings.TrimPrefix(shadeTokens[0], SHADE_PREFIX)
 			name := shadeTokens[3]
 			roomId := shadeTokens[1]
-			settingTokens := strings.SplitN(data[i+1], "-", 4)
+			settingTokens := strings.SplitN(data[i+1], DELIMITER, 4)
 			height, _ := strconv.Atoi(settingTokens[2])
 			shade := Shade{id: id, name: name, roomId: roomId, height: height, address: address}
 			shades = append(shades, shade)
@@ -101,9 +111,9 @@ func GetRooms(ip string, port int) ([]Room) {
 	rooms := []Room{}
 	allShades := GetShades(ip, port) // TODO: optimize. currently making 2 calls to getData
 	for _, line := range data {
-		if strings.HasPrefix(line, "$cr") {
-			shadeTokens := strings.SplitN(line, "-", 4)
-			id := strings.TrimPrefix(shadeTokens[0], "$cr")
+		if strings.HasPrefix(line, ROOM_PREFIX) {
+			shadeTokens := strings.SplitN(line, DELIMITER, 4)
+			id := strings.TrimPrefix(shadeTokens[0], ROOM_PREFIX)
 			name := shadeTokens[3]
 			roomShades := []Shade{}
 			for _, shade := range allShades {
@@ -120,7 +130,7 @@ func GetRooms(ip string, port int) ([]Room) {
 
 func getData(address string) ([]string) {
 	scanner, writer, conn := connect(address)
-	writer.WriteString("$dat")
+	writer.WriteString(DATA_COMMAND)
 	writer.Flush()
 
 	scanSuccess := scanner.Scan()
@@ -129,8 +139,12 @@ func getData(address string) ([]string) {
 	for scanSuccess && !atEnd {
 		if (scanSuccess) {
 			text := scanner.Text()
-			data = append(data, strings.SplitN(text, " ", 2)[1])
-			if strings.HasSuffix(text, " $upd01-") {
+			tokens := strings.SplitN(text, DATA_DELIMITER, 2)
+			if len(tokens) < 2 {
+				log.Fatal("Error retrieving data from hd. Got ", text)
+			}
+			data = append(data, tokens[1])
+			if strings.HasSuffix(text, DATA_END) {
 				atEnd = true
 			} else {
 				scanSuccess = scanner.Scan()
